@@ -420,6 +420,59 @@ extension CameraController {
         }
         // self.videoOutput?.stopRecording()
     }
+
+    private func switchToCamera(_ camera: AVCaptureDevice) throws {
+        let newCameraInput = try AVCaptureDeviceInput(device: camera)
+        guard let captureSession = self.captureSession else {
+            throw CameraControllerError.captureSessionIsMissing
+        }
+
+        // Verwijder de huidige camera-input
+        if let currentInput = self.rearCameraInput {
+            captureSession.removeInput(currentInput)
+        }
+
+        // Voeg de nieuwe camera-input toe
+        if captureSession.canAddInput(newCameraInput) {
+            captureSession.addInput(newCameraInput)
+            self.rearCameraInput = newCameraInput
+        } else {
+            throw CameraControllerError.invalidOperation
+        }
+    }
+
+    func switchToWideAngle() throws {
+        guard let captureSession = self.captureSession, captureSession.isRunning else {
+            throw CameraControllerError.captureSessionIsMissing
+        }
+
+        captureSession.beginConfiguration()
+
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .builtInUltraWideCamera],
+            mediaType: .video,
+            position: .back
+        )
+
+        let cameras = discoverySession.devices
+
+        // Controleer de huidige camera
+        if let currentInput = self.rearCameraInput {
+            let currentDevice = currentInput.device
+
+            let newCamera = currentDevice.deviceType == .builtInUltraWideCamera
+                ? cameras.first(where: { $0.deviceType == .builtInWideAngleCamera })  // Terug naar normale lens
+                : cameras.first(where: { $0.deviceType == .builtInUltraWideCamera }) // Switch naar ultra-wide
+
+            if let selectedCamera = newCamera {
+                try switchToCamera(selectedCamera)
+            } else {
+                throw CameraControllerError.noCamerasAvailable
+            }
+        }
+
+        captureSession.commitConfiguration()
+    }
 }
 
 extension CameraController: UIGestureRecognizerDelegate {

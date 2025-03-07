@@ -298,4 +298,13 @@ public class CameraPreview: CAPPlugin {
         }
     }
 
+    @objc func switchToWideAngle(_ call: CAPPluginCall) {
+    do {
+        try self.cameraController.switchToWideAngle()
+        call.resolve()
+    } catch {
+        call.reject("Failed to switch to wide-angle lens")
+    }
+}
+
 }

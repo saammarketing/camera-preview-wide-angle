@@ -72,4 +72,5 @@ export interface CameraPreviewPlugin {
   flip(): Promise<void>;
   setOpacity(options: CameraOpacityOptions): Promise<void>;
   isCameraStarted(): Promise<{ value: boolean }>;
+  switchToWideAngle(): Promise<void>;
 }
