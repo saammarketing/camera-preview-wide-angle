@@ -39,6 +39,8 @@ class CameraController: NSObject {
 }
 
 extension CameraController {
+
+
     func prepare(cameraPosition: String, disableAudio: Bool, completionHandler: @escaping (Error?) -> Void) {
         func createCaptureSession() {
             self.captureSession = AVCaptureSession()
@@ -279,6 +281,48 @@ extension CameraController {
         self.sampleBufferCaptureCompletionBlock = completion
     }
 
+    func getSupportedCameras() throws -> [String] {
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [
+                .builtInWideAngleCamera,
+                .builtInUltraWideCamera,
+                .builtInDualCamera,
+                .builtInTripleCamera
+            ],
+            mediaType: .video,
+            position: .unspecified
+        )
+        
+        let cameras = discoverySession.devices
+        var supportedCameras: [String] = []
+        
+        guard !cameras.isEmpty else {
+            throw CameraControllerError.noCamerasAvailable
+        }
+        
+        for camera in cameras {
+            if camera.position == .front {
+                supportedCameras.append("front")
+            } else if camera.position == .back {
+                switch camera.deviceType {
+                case .builtInWideAngleCamera:
+                    supportedCameras.append("wide")
+                case .builtInUltraWideCamera:
+                    supportedCameras.append("ultra-wide")
+                case .builtInDualCamera:
+                    supportedCameras.append("dual-cam")
+                case .builtInTripleCamera:
+                    supportedCameras.append("triple-cam")
+                default:
+                    supportedCameras.append("back-cam")
+                }
+            } else {
+                supportedCameras.append("unknown")
+            }
+        }
+        return supportedCameras
+    }
+    
     func getSupportedFlashModes() throws -> [String] {
         var currentCamera: AVCaptureDevice?
         switch currentCameraPosition {

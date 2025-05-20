@@ -227,6 +227,18 @@ public class CameraPreview: CAPPlugin {
         }
     }
 
+    @objc func getSupportedCameras(_ call: CAPPluginCall) {
+        print("Plugin: getSupportedCameras() is aangeroepen")
+        do {
+            let supportCameraModes = try self.cameraController.getSupportedCameras()
+            print("Plugin: result: \(supportCameraModes)")
+            call.resolve(["result": supportCameraModes])
+        } catch {
+            print("Plugin: Fout bij getSupportedCameras: \(error)")
+            call.reject("failed to get supported cameras")
+        }
+    }
+    
     @objc func setFlashMode(_ call: CAPPluginCall) {
         guard let flashMode = call.getString("flashMode") else {
             call.reject("failed to set flash mode. required parameter flashMode is missing")

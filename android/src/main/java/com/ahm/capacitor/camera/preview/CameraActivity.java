@@ -45,6 +45,11 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import android.content.Context;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class CameraActivity extends Fragment {
 
@@ -511,6 +516,67 @@ public class CameraActivity extends Fragment {
 
             mCamera.startPreview();
         }
+    }
+
+    /**
+     * Switch between wide-angle and ultra-wide cameras if available.
+     */
+    public void switchToWideAngle() throws Exception {
+        // Use Camera2 API to list back-facing cameras and toggle between wide-angle and ultra-wide.
+        android.hardware.camera2.CameraManager manager =
+            (android.hardware.camera2.CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
+        String[] cameraIds = manager.getCameraIdList();
+        String newCameraId = null;
+        String currentId = String.valueOf(cameraCurrentlyLocked);
+        // Iterate cameras to find back-facing with different focal lengths
+        for (String id : cameraIds) {
+            CameraCharacteristics c = manager.getCameraCharacteristics(id);
+            Integer facing = c.get(CameraCharacteristics.LENS_FACING);
+            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+                float[] focalLengths = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                if (focalLengths != null && focalLengths.length > 1) {
+                    // toggle: if currentId matches id of one lens, pick the other
+                    if (!id.equals(currentId)) {
+                        newCameraId = id;
+                        break;
+                    }
+                }
+            }
+        }
+        if (newCameraId == null) {
+            throw new Exception("No wide-angle alternative found");
+        }
+        // Release current camera and open the selected one
+        mCamera.stopPreview();
+        mCamera.release();
+        mCamera = android.hardware.Camera.open(Integer.parseInt(newCameraId));
+        mPreview.switchCamera(mCamera, Integer.parseInt(newCameraId));
+        mCamera.startPreview();
+        cameraCurrentlyLocked = Integer.parseInt(newCameraId);
+    }
+
+    /**
+     * Return a list of supported camera types: "front", "back", "wide", "ultra-wide".
+     */
+    public JSONArray getSupportedCamerasList() throws Exception {
+        CameraManager manager = (CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
+        String[] cameraIds = manager.getCameraIdList();
+        JSONArray result = new JSONArray();
+        for (String id : cameraIds) {
+            CameraCharacteristics c = manager.getCameraCharacteristics(id);
+            Integer facing = c.get(CameraCharacteristics.LENS_FACING);
+            if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+                result.put("front");
+            } else if (facing == CameraCharacteristics.LENS_FACING_BACK) {
+                float[] focalLengths = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                if (focalLengths != null && focalLengths.length > 1) {
+                    // assume second focal length is ultra-wide
+                    result.put("ultra-wide");
+                }
+                result.put("back");
+            }
+        }
+        return result;
     }
 
     public void setCameraParameters(Camera.Parameters params) {
