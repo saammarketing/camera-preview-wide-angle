@@ -27,8 +27,7 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.io.File;
 import java.util.List;
 import org.json.JSONArray;
-import android.hardware.camera2.CameraCharacteristics;
-import android.hardware.camera2.CameraManager;
+
 
 @CapacitorPlugin(name = "CameraPreview", permissions = { @Permission(strings = { CAMERA }, alias = CameraPreview.CAMERA_PERMISSION_ALIAS) })
 public class CameraPreview extends Plugin implements CameraActivity.CameraPreviewListener {
@@ -143,51 +142,57 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
 
     @PluginMethod
     public void getSupportedCameras(PluginCall call) {
-        if (!hasView(call)) {
-            call.reject("Camera is not running");
-            return;
-        }
-        try {
-            JSONArray list = fragment.getSupportedCamerasList();
-            JSObject js = new JSObject();
-            js.put("value", list);
-            call.resolve(js);
-        } catch (Exception e) {
-            call.reject("Error getting supported cameras", e);
+        Logger.debug(getLogTag(), "getSupportedCameras() called");
+
+        if (fragment != null) {
+            List<String> cameras = fragment.getSupportedCameras();
+            Logger.debug(getLogTag(), "Supported cameras: " + cameras.toString());
+
+            JSObject result = new JSObject();
+            result.put("result", new JSONArray(cameras));
+            call.resolve(result);
+        } else {
+            Logger.debug(getLogTag(), "Camera fragment is not initialized");
+            call.reject("Camera fragment is not initialized");
         }
     }
 
     @PluginMethod
     public void switchToWideAngle(PluginCall call) {
-        try {
-            fragment.switchToWideAngle();
-            call.resolve();
-        } catch (Exception e) {
-            call.reject("Failed to switch to wide-angle", e);
+        if (fragment != null) {
+            try {
+                fragment.toggleCamera();
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Failed to toggle camera: " + e.getMessage());
+            }
+        } else {
+            call.reject("Camera fragment is not initialized");
         }
     }
 
-    // Override existing getSupportedFlashModes to return JSON array of modes
     @PluginMethod
     public void getSupportedFlashModes(PluginCall call) {
-        if (!hasCamera(call)) {
+        if (this.hasCamera(call) == false) {
             call.reject("Camera is not running");
             return;
         }
-        try {
-            JSObject js = new JSObject();
-            JSONArray modes = new JSONArray();
-            List<String> supportedModes = fragment.getCamera().getParameters().getSupportedFlashModes();
-            if (supportedModes != null) {
-                for (String mode : supportedModes) {
-                    modes.put(mode);
-                }
+
+        Camera camera = fragment.getCamera();
+        Camera.Parameters params = camera.getParameters();
+        List<String> supportedFlashModes;
+        supportedFlashModes = params.getSupportedFlashModes();
+        JSONArray jsonFlashModes = new JSONArray();
+
+        if (supportedFlashModes != null) {
+            for (int i = 0; i < supportedFlashModes.size(); i++) {
+                jsonFlashModes.put(new String(supportedFlashModes.get(i)));
             }
-            js.put("value", modes);
-            call.resolve(js);
-        } catch (Exception e) {
-            call.reject("Error getting flash modes", e);
         }
+
+        JSObject jsObject = new JSObject();
+        jsObject.put("result", jsonFlashModes);
+        call.resolve(jsObject);
     }
 
     @PluginMethod
@@ -531,4 +536,3 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
             );
     }
 }
-

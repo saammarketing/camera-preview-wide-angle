@@ -45,11 +45,9 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import android.content.Context;
-import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
-import org.json.JSONArray;
-import org.json.JSONObject;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraAccessException;
 
 public class CameraActivity extends Fragment {
 
@@ -72,6 +70,10 @@ public class CameraActivity extends Fragment {
     private static final String TAG = "CameraActivity";
     public FrameLayout mainLayout;
     public FrameLayout frameContainerLayout;
+
+    // Camera2 implementation
+    private CameraManager cameraManager;
+    private String wideAngleCameraId = null;
 
     private Preview mPreview;
     private boolean canTakePicture = true;
@@ -111,6 +113,10 @@ public class CameraActivity extends Fragment {
     public int x;
     public int y;
 
+    private boolean isWideAngleMode = false;
+    private int normalCameraId = -1;
+    private int lastBackCameraId = -1;  // Store the last used back camera ID
+
     public void setEventListener(CameraPreviewListener listener) {
         eventListener = listener;
     }
@@ -124,6 +130,7 @@ public class CameraActivity extends Fragment {
         // Inflate the layout for this fragment
         view = inflater.inflate(getResources().getIdentifier("camera_activity", "layout", appResourcesPackage), container, false);
         createCameraPreview();
+        findWideAngleCamera(); // Initialize wide angle camera detection
         return view;
     }
 
@@ -141,8 +148,9 @@ public class CameraActivity extends Fragment {
             //set box position and size
             FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(width, height);
             layoutParams.setMargins(x, y, 0, 0);
-            frameContainerLayout =
-                (FrameLayout) view.findViewById(getResources().getIdentifier("frame_container", "id", appResourcesPackage));
+            frameContainerLayout = (FrameLayout) view.findViewById(
+                getResources().getIdentifier("frame_container", "id", appResourcesPackage)
+            );
             frameContainerLayout.setLayoutParams(layoutParams);
 
             //video view
@@ -178,7 +186,8 @@ public class CameraActivity extends Fragment {
 
                                 @Override
                                 public boolean onTouch(View v, MotionEvent event) {
-                                    FrameLayout.LayoutParams layoutParams = (FrameLayout.LayoutParams) frameContainerLayout.getLayoutParams();
+                                    FrameLayout.LayoutParams layoutParams =
+                                        (FrameLayout.LayoutParams) frameContainerLayout.getLayoutParams();
 
                                     boolean isSingleTapTouch = gestureDetector.onTouchEvent(event);
                                     int action = event.getAction();
@@ -323,8 +332,359 @@ public class CameraActivity extends Fragment {
             Camera.getCameraInfo(i, cameraInfo);
             if (cameraInfo.facing == facing) {
                 defaultCameraId = i;
+                lastBackCameraId = i;  // Initialize lastBackCameraId with default back camera
                 break;
             }
+        }
+    }
+
+    // Returns a list of supported cameras: "front", "back", or "unknown" for each available camera.
+    public java.util.List<String> getSupportedCameras() {
+        java.util.List<String> supportedCameras = new java.util.ArrayList<>();
+        CameraManager manager = (CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
+        try {
+            for (String cameraId : manager.getCameraIdList()) {
+                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+                Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                float[] focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+
+                if (lensFacing != null) {
+                    if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
+                        supportedCameras.add("front");
+                    } else if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+                        if (focalLengths != null && focalLengths.length > 0) {
+                            float focal = focalLengths[0];
+                            if (focal <= 1.8f) {
+                                supportedCameras.add("ultra-wide");
+                            } else if (focal <= 2.2f) {
+                                supportedCameras.add("wide");
+                            } else {
+                                supportedCameras.add("telephoto");
+                            }
+                        } else {
+                            supportedCameras.add("back");
+                        }
+                    } else {
+                        supportedCameras.add("unknown");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Camera2 getSupportedCameras error: " + e.getMessage());
+        }
+
+        return supportedCameras;
+    }
+
+    /**
+     * Switch to the wide-angle camera using Camera2 API to select the appropriate camera,
+     * but still using legacy Camera API for preview.
+     */
+    // public void switchToWideAngle() {
+    //     CameraManager manager = (CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
+    //     try {
+    //         for (String cameraId : manager.getCameraIdList()) {
+    //             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+    //             Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+    //             float[] focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+
+    //             if (lensFacing != null && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+    //                 if (focalLengths != null && focalLengths.length > 0 && focalLengths[0] <= 2.2f) {
+    //                     Log.d(TAG, "Found back camera with focal length " + focalLengths[0]);
+
+    //                     if (mCamera != null) {
+    //                         mCamera.stopPreview();
+    //                         mPreview.setCamera(null, -1);
+    //                         mCamera.release();
+    //                         mCamera = null;
+    //                     }
+
+    //                     int cameraIndex = Integer.parseInt(cameraId); // assuming numeric cameraId
+    //                     mCamera = Camera.open(cameraIndex);
+    //                     cameraCurrentlyLocked = cameraIndex;
+
+    //                     if (cameraParameters != null) {
+    //                         mCamera.setParameters(cameraParameters);
+    //                     }
+
+    //                     mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+    //                     mCamera.startPreview();
+    //                     return;
+    //                 }
+    //             }
+    //         }
+
+    //         Log.d(TAG, "No suitable wide-angle camera found.");
+    //     } catch (Exception e) {
+    //         Log.e(TAG, "switchToWideAngle error: " + e.getMessage());
+    //     }
+    // }
+
+    public void toggleCamera() {
+        if (isWideAngleMode) {
+            switchToNormalCamera();
+        } else {
+            switchToWideAngle();
+        }
+    }
+
+    private void switchToNormalCamera() {
+        if (normalCameraId == -1) {
+            Log.e(TAG, "Normal camera ID not found");
+            return;
+        }
+
+        Log.d(TAG, "Attempting to switch to normal camera ID: " + normalCameraId);
+
+        // Don't switch if we're already on the normal camera
+        if (cameraCurrentlyLocked == normalCameraId) {
+            Log.d(TAG, "Already on normal camera");
+            return;
+        }
+
+        try {
+            // First stop and release the current camera
+            if (mCamera != null) {
+                mCamera.stopPreview();
+                mPreview.setCamera(null, -1);
+                mCamera.release();
+                mCamera = null;
+            }
+
+            // Open the new camera
+            mCamera = Camera.open(normalCameraId);
+            cameraCurrentlyLocked = normalCameraId;
+            lastBackCameraId = normalCameraId;  // Update lastBackCameraId when switching to normal camera
+
+            // Get the default parameters first
+            Camera.Parameters newParams = mCamera.getParameters();
+            
+            // Only apply saved parameters if they exist and are compatible
+            if (cameraParameters != null) {
+                try {
+                    // Copy only the essential parameters that are likely to be supported
+                    if (cameraParameters.getFlashMode() != null) {
+                        newParams.setFlashMode(cameraParameters.getFlashMode());
+                    }
+                    if (cameraParameters.getFocusMode() != null) {
+                        newParams.setFocusMode(cameraParameters.getFocusMode());
+                    }
+                    if (cameraParameters.getWhiteBalance() != null) {
+                        newParams.setWhiteBalance(cameraParameters.getWhiteBalance());
+                    }
+                    if (cameraParameters.getSceneMode() != null) {
+                        newParams.setSceneMode(cameraParameters.getSceneMode());
+                    }
+                    if (cameraParameters.getColorEffect() != null) {
+                        newParams.setColorEffect(cameraParameters.getColorEffect());
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Some camera parameters could not be applied: " + e.getMessage());
+                }
+            }
+
+            // Apply the parameters
+            try {
+                mCamera.setParameters(newParams);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to set some camera parameters: " + e.getMessage());
+                // Continue anyway with default parameters
+            }
+
+            // Switch the preview
+            mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+            mCamera.startPreview();
+            
+            isWideAngleMode = false;
+            Log.d(TAG, "Successfully switched to normal camera");
+        } catch (Exception e) {
+            Log.e(TAG, "Error switching to normal camera", e);
+            // Try to recover by reopening the original camera
+            try {
+                if (mCamera != null) {
+                    mCamera.release();
+                    mCamera = null;
+                }
+                mCamera = Camera.open(defaultCameraId);
+                cameraCurrentlyLocked = defaultCameraId;
+                mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+                mCamera.startPreview();
+            } catch (Exception recoveryError) {
+                Log.e(TAG, "Failed to recover from normal camera switch error", recoveryError);
+            }
+        }
+    }
+
+    public void switchToWideAngle() {
+        if (wideAngleCameraId == null) {
+            Log.e(TAG, "No wide angle camera found");
+            return;
+        }
+
+        int wideAngleCamId = getCameraIdByCamera2Id(wideAngleCameraId);
+        Log.d(TAG, "Wide angle camera ID: " + wideAngleCamId);
+
+        if (wideAngleCamId == -1) {
+            Log.e(TAG, "Could not map wide angle camera ID to legacy camera index");
+            return;
+        }
+
+        // Get current camera info
+        Camera.CameraInfo currentCameraInfo = new Camera.CameraInfo();
+        try {
+            Camera.getCameraInfo(cameraCurrentlyLocked, currentCameraInfo);
+            Log.d(TAG, "Current camera ID: " + cameraCurrentlyLocked + ", facing: " + 
+                (currentCameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT ? "FRONT" : "BACK"));
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting current camera info: " + e.getMessage());
+            return;
+        }
+
+        // If we're on front camera, don't allow switching to wide angle
+        if (currentCameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+            Log.d(TAG, "Cannot switch to wide angle while on front camera");
+            return;
+        }
+
+        // Determine which camera to switch to
+        int targetCameraId;
+        if (cameraCurrentlyLocked == wideAngleCamId) {
+            // If we're on wide angle, switch to normal
+            targetCameraId = normalCameraId;
+            Log.d(TAG, "Switching from wide angle to normal camera: " + targetCameraId);
+        } else {
+            // If we're on normal, switch to wide angle
+            targetCameraId = wideAngleCamId;
+            Log.d(TAG, "Switching from normal to wide angle camera: " + targetCameraId);
+        }
+
+        try {
+            // First stop and release the current camera
+            if (mCamera != null) {
+                mCamera.stopPreview();
+                mPreview.setCamera(null, -1);
+                mCamera.release();
+                mCamera = null;
+            }
+
+            // Open the new camera
+            mCamera = Camera.open(targetCameraId);
+            cameraCurrentlyLocked = targetCameraId;
+            lastBackCameraId = targetCameraId;  // Update lastBackCameraId to maintain state
+
+            // Get the default parameters first
+            Camera.Parameters newParams = mCamera.getParameters();
+            
+            // Only apply saved parameters if they exist and are compatible
+            if (cameraParameters != null) {
+                try {
+                    // Copy only the essential parameters that are likely to be supported
+                    if (cameraParameters.getFlashMode() != null) {
+                        newParams.setFlashMode(cameraParameters.getFlashMode());
+                    }
+                    if (cameraParameters.getFocusMode() != null) {
+                        newParams.setFocusMode(cameraParameters.getFocusMode());
+                    }
+                    if (cameraParameters.getWhiteBalance() != null) {
+                        newParams.setWhiteBalance(cameraParameters.getWhiteBalance());
+                    }
+                    if (cameraParameters.getSceneMode() != null) {
+                        newParams.setSceneMode(cameraParameters.getSceneMode());
+                    }
+                    if (cameraParameters.getColorEffect() != null) {
+                        newParams.setColorEffect(cameraParameters.getColorEffect());
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Some camera parameters could not be applied: " + e.getMessage());
+                }
+            }
+
+            // Apply the parameters
+            try {
+                mCamera.setParameters(newParams);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to set some camera parameters: " + e.getMessage());
+                // Continue anyway with default parameters
+            }
+
+            // Switch the preview
+            mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+            mCamera.startPreview();
+            
+            isWideAngleMode = (targetCameraId == wideAngleCamId);
+            Log.d(TAG, "Successfully switched camera. Wide angle mode: " + isWideAngleMode);
+        } catch (Exception e) {
+            Log.e(TAG, "Error switching camera: " + e.getMessage());
+            e.printStackTrace();
+            
+            // Try to recover by reopening the normal back camera
+            try {
+                Log.d(TAG, "Attempting to recover by reopening normal back camera: " + normalCameraId);
+                mCamera = Camera.open(normalCameraId);
+                cameraCurrentlyLocked = normalCameraId;
+                lastBackCameraId = normalCameraId;
+                mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+                mCamera.startPreview();
+                isWideAngleMode = false;
+                Log.d(TAG, "Recovery successful");
+            } catch (Exception recoveryError) {
+                Log.e(TAG, "Failed to recover from camera switch error: " + recoveryError.getMessage());
+                recoveryError.printStackTrace();
+            }
+        }
+    }
+
+    private void findWideAngleCamera() {
+        try {
+            cameraManager = (CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
+            float widestFocalLength = Float.MAX_VALUE;
+            String widestCameraId = null;
+
+            // First find the normal camera (usually the first back camera)
+            for (String cameraId : cameraManager.getCameraIdList()) {
+                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+                Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                
+                if (lensFacing != null && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+                    if (normalCameraId == -1) {
+                        normalCameraId = Integer.parseInt(cameraId);
+                        Log.d(TAG, "Found normal camera with ID: " + normalCameraId);
+                    }
+                    
+                    float[] focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                    if (focalLengths != null && focalLengths.length > 0) {
+                        float focalLength = focalLengths[0];
+                        Log.d(TAG, "Camera " + cameraId + " has focal length: " + focalLength);
+                        
+                        // Find the camera with the widest angle (smallest focal length)
+                        if (focalLength < widestFocalLength) {
+                            widestFocalLength = focalLength;
+                            widestCameraId = cameraId;
+                        }
+                    }
+                }
+            }
+
+            if (widestCameraId != null) {
+                wideAngleCameraId = widestCameraId;
+                Log.d(TAG, "Selected wide angle camera with ID: " + wideAngleCameraId + " and focal length: " + widestFocalLength);
+            } else {
+                Log.e(TAG, "No back-facing cameras found");
+            }
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Failed to access camera characteristics", e);
+        }
+    }
+
+    private int getCameraIdByCamera2Id(String camera2Id) {
+        try {
+            // First try direct parsing
+            int id = Integer.parseInt(camera2Id);
+            Log.d(TAG, "Mapped Camera2 ID " + camera2Id + " to legacy camera index " + id);
+            return id;
+        } catch (NumberFormatException e) {
+            Log.e(TAG, "Invalid camera ID format: " + camera2Id);
+            return -1;
         }
     }
 
@@ -454,7 +814,9 @@ public class CameraActivity extends Fragment {
         // etc.
         numberOfCameras = Camera.getNumberOfCameras();
 
-        int nextFacing = cameraCurrentlyLocked == Camera.CameraInfo.CAMERA_FACING_BACK ? Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+        int nextFacing = cameraCurrentlyLocked == Camera.CameraInfo.CAMERA_FACING_BACK
+            ? Camera.CameraInfo.CAMERA_FACING_FRONT
+            : Camera.CameraInfo.CAMERA_FACING_BACK;
 
         // Find the next ID of the camera to switch to (front if the current is back and visa versa)
         Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
@@ -471,112 +833,112 @@ public class CameraActivity extends Fragment {
     public void switchCamera() {
         // check for availability of multiple cameras
         if (numberOfCameras == 1) {
-            //There is only one camera available
-        } else {
-            Log.d(TAG, "numberOfCameras: " + numberOfCameras);
+            Log.d(TAG, "Only one camera available, cannot switch");
+            return;
+        }
 
-            // OK, we have multiple cameras. Release this camera -> cameraCurrentlyLocked
-            if (mCamera != null) {
-                mCamera.stopPreview();
-                mPreview.setCamera(null, -1);
-                mCamera.release();
-                mCamera = null;
+        Log.d(TAG, "Starting camera switch. Current camera ID: " + cameraCurrentlyLocked);
+        Log.d(TAG, "Total number of cameras: " + numberOfCameras);
+
+        // OK, we have multiple cameras. Release this camera -> cameraCurrentlyLocked
+        if (mCamera != null) {
+            mCamera.stopPreview();
+            mPreview.setCamera(null, -1);
+            mCamera.release();
+            mCamera = null;
+        }
+
+        try {
+            // Get current camera info
+            Camera.CameraInfo currentCameraInfo = new Camera.CameraInfo();
+            Camera.getCameraInfo(cameraCurrentlyLocked, currentCameraInfo);
+            Log.d(TAG, "Current camera facing: " + (currentCameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT ? "FRONT" : "BACK"));
+
+            // Find the front camera ID
+            int frontCameraId = -1;
+            for (int i = 0; i < numberOfCameras; i++) {
+                Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+                Camera.getCameraInfo(i, cameraInfo);
+                Log.d(TAG, "Camera " + i + " facing: " + (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT ? "FRONT" : "BACK"));
+                if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                    frontCameraId = i;
+                    Log.d(TAG, "Found front camera with ID: " + frontCameraId);
+                    break;
+                }
             }
 
-            Log.d(TAG, "cameraCurrentlyLocked := " + Integer.toString(cameraCurrentlyLocked));
-            try {
-                cameraCurrentlyLocked = getNextCameraId();
-                Log.d(TAG, "cameraCurrentlyLocked new: " + cameraCurrentlyLocked);
-            } catch (Exception exception) {
-                Log.d(TAG, exception.getMessage());
+            if (frontCameraId == -1) {
+                Log.e(TAG, "No front camera found");
+                return;
             }
 
-            // Acquire the next camera and request Preview to reconfigure parameters.
+            // If we're on a back camera, switch to front
+            if (currentCameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_BACK) {
+                cameraCurrentlyLocked = frontCameraId;
+                Log.d(TAG, "Switching from back camera to front camera: " + frontCameraId);
+            } else {
+                // If we're on front camera, always switch to the normal back camera
+                cameraCurrentlyLocked = normalCameraId;
+                isWideAngleMode = false;  // Reset wide angle mode when switching back from front camera
+                Log.d(TAG, "Switching from front camera to normal back camera: " + normalCameraId);
+            }
+
+            // Acquire the new camera
+            Log.d(TAG, "Opening camera with ID: " + cameraCurrentlyLocked);
             mCamera = Camera.open(cameraCurrentlyLocked);
 
             if (cameraParameters != null) {
-                Log.d(TAG, "camera parameter not null");
-
-                // Check for flashMode as well to prevent error on frontward facing camera.
-                List<String> supportedFlashModesNewCamera = mCamera.getParameters().getSupportedFlashModes();
-                String currentFlashModePreviousCamera = cameraParameters.getFlashMode();
-                if (supportedFlashModesNewCamera != null && supportedFlashModesNewCamera.contains(currentFlashModePreviousCamera)) {
-                    Log.d(TAG, "current flash mode supported on new camera. setting params");
-                    /* mCamera.setParameters(cameraParameters);
-            The line above is disabled because parameters that can actually be changed are different from one device to another. Makes less sense trying to reconfigure them when changing camera device while those settings gan be changed using plugin methods.
-         */
-                } else {
-                    Log.d(TAG, "current flash mode NOT supported on new camera");
-                }
-            } else {
-                Log.d(TAG, "camera parameter NULL");
-            }
-
-            mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
-
-            mCamera.startPreview();
-        }
-    }
-
-    /**
-     * Switch between wide-angle and ultra-wide cameras if available.
-     */
-    public void switchToWideAngle() throws Exception {
-        // Use Camera2 API to list back-facing cameras and toggle between wide-angle and ultra-wide.
-        android.hardware.camera2.CameraManager manager =
-            (android.hardware.camera2.CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
-        String[] cameraIds = manager.getCameraIdList();
-        String newCameraId = null;
-        String currentId = String.valueOf(cameraCurrentlyLocked);
-        // Iterate cameras to find back-facing with different focal lengths
-        for (String id : cameraIds) {
-            CameraCharacteristics c = manager.getCameraCharacteristics(id);
-            Integer facing = c.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
-                float[] focalLengths = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
-                if (focalLengths != null && focalLengths.length > 1) {
-                    // toggle: if currentId matches id of one lens, pick the other
-                    if (!id.equals(currentId)) {
-                        newCameraId = id;
-                        break;
+                Log.d(TAG, "Applying saved camera parameters");
+                try {
+                    Camera.Parameters newParams = mCamera.getParameters();
+                    
+                    // Copy only the essential parameters that are likely to be supported
+                    if (cameraParameters.getFlashMode() != null) {
+                        newParams.setFlashMode(cameraParameters.getFlashMode());
                     }
+                    if (cameraParameters.getFocusMode() != null) {
+                        newParams.setFocusMode(cameraParameters.getFocusMode());
+                    }
+                    if (cameraParameters.getWhiteBalance() != null) {
+                        newParams.setWhiteBalance(cameraParameters.getWhiteBalance());
+                    }
+                    if (cameraParameters.getSceneMode() != null) {
+                        newParams.setSceneMode(cameraParameters.getSceneMode());
+                    }
+                    if (cameraParameters.getColorEffect() != null) {
+                        newParams.setColorEffect(cameraParameters.getColorEffect());
+                    }
+                    
+                    mCamera.setParameters(newParams);
+                } catch (Exception e) {
+                    Log.w(TAG, "Some camera parameters could not be applied: " + e.getMessage());
                 }
             }
-        }
-        if (newCameraId == null) {
-            throw new Exception("No wide-angle alternative found");
-        }
-        // Release current camera and open the selected one
-        mCamera.stopPreview();
-        mCamera.release();
-        mCamera = android.hardware.Camera.open(Integer.parseInt(newCameraId));
-        mPreview.switchCamera(mCamera, Integer.parseInt(newCameraId));
-        mCamera.startPreview();
-        cameraCurrentlyLocked = Integer.parseInt(newCameraId);
-    }
 
-    /**
-     * Return a list of supported camera types: "front", "back", "wide", "ultra-wide".
-     */
-    public JSONArray getSupportedCamerasList() throws Exception {
-        CameraManager manager = (CameraManager) getActivity().getSystemService(Context.CAMERA_SERVICE);
-        String[] cameraIds = manager.getCameraIdList();
-        JSONArray result = new JSONArray();
-        for (String id : cameraIds) {
-            CameraCharacteristics c = manager.getCameraCharacteristics(id);
-            Integer facing = c.get(CameraCharacteristics.LENS_FACING);
-            if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                result.put("front");
-            } else if (facing == CameraCharacteristics.LENS_FACING_BACK) {
-                float[] focalLengths = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
-                if (focalLengths != null && focalLengths.length > 1) {
-                    // assume second focal length is ultra-wide
-                    result.put("ultra-wide");
-                }
-                result.put("back");
+            // Switch the preview
+            Log.d(TAG, "Switching preview to camera: " + cameraCurrentlyLocked);
+            mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+            mCamera.startPreview();
+            Log.d(TAG, "Camera switch completed successfully");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error during camera switch: " + e.getMessage());
+            e.printStackTrace();
+            
+            // Try to recover by reopening the normal back camera
+            try {
+                Log.d(TAG, "Attempting to recover by reopening normal back camera: " + normalCameraId);
+                mCamera = Camera.open(normalCameraId);
+                cameraCurrentlyLocked = normalCameraId;
+                isWideAngleMode = false;  // Reset wide angle mode on recovery
+                mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+                mCamera.startPreview();
+                Log.d(TAG, "Recovery successful");
+            } catch (Exception recoveryError) {
+                Log.e(TAG, "Failed to recover from camera switch error: " + recoveryError.getMessage());
+                recoveryError.printStackTrace();
             }
         }
-        return result;
     }
 
     public void setCameraParameters(Camera.Parameters params) {
@@ -588,6 +950,7 @@ public class CameraActivity extends Fragment {
     }
 
     public boolean hasFrontCamera() {
+        Log.d(TAG, "CameraFrontOpen");
         return getActivity().getApplicationContext().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_FRONT);
     }
 
@@ -1083,10 +1446,10 @@ public class CameraActivity extends Fragment {
             y = height - 100;
         }
         return new Rect(
-            Math.round((x - 100) * 2000 / width - 1000),
-            Math.round((y - 100) * 2000 / height - 1000),
-            Math.round((x + 100) * 2000 / width - 1000),
-            Math.round((y + 100) * 2000 / height - 1000)
+            Math.round(((x - 100) * 2000) / width - 1000),
+            Math.round(((y - 100) * 2000) / height - 1000),
+            Math.round(((x + 100) * 2000) / width - 1000),
+            Math.round(((y + 100) * 2000) / height - 1000)
         );
     }
 
@@ -1100,3 +1463,4 @@ public class CameraActivity extends Fragment {
         return (float) Math.sqrt(x * x + y * y);
     }
 }
+
